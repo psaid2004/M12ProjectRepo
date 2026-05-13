@@ -1,0 +1,1 @@
+  nvcc strippedBinaryPartition.cu -I ../Common -o strbinary

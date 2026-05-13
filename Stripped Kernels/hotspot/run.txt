@@ -1,0 +1,1 @@
+strippedhotspot 512 2 2 data/temp_512 data/power_512 stroutputtest1.out

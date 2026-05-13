@@ -1,0 +1,2 @@
+nvcc strippedBlackScholes.cu -I ../Common -o strblackscholes
+strblackscholes
