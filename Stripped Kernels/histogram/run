@@ -1,1 +1,0 @@
-nvcc main.cpp strippedhistogram256.cu histogram_gold.cpp -I../Common -o histogram

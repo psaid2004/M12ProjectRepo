@@ -1,4 +1,0 @@
-nvcc stripped_backprop_layerforward.cu backprop.c facetrain.c imagenet.c -o strbackproplayer
-nvcc stripped_backprop_adjustweights.cu backprop.c facetrain.c imagenet.c -o strbackpropweights
-
-backprop 65536
