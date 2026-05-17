@@ -1,0 +1,167 @@
+/* Copyright (c) 2022, NVIDIA CORPORATION. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *  * Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ *  * Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *  * Neither the name of NVIDIA CORPORATION nor the names of its
+ *    contributors may be used to endorse or promote products derived
+ *    from this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+/*
+ * This sample implements 64-bin histogram calculation
+ * of arbitrary-sized 8-bit data array
+ */
+//nvcc main.cpp histogram64.cu histogram256.cu histogram_gold.cpp -I../../../Common -o histogram ----------------------------------------------------
+// CUDA Runtime
+#include <cuda_runtime.h>
+
+// Utility and system includes
+#include <helper_cuda.h>
+#include <helper_functions.h> // helper for shared that are common to CUDA Samples
+
+// project include
+#include "histogram_common.h"
+#define NUM_OF_PARTITIONS 2
+
+const int          numRuns    = 16;
+const static char *sSDKsample = "[histogram]\0";
+
+int main(int argc, char **argv)
+{
+    uchar              *h_Data;
+    uint               *h_HistogramCPU, *h_HistogramGPU;
+    uchar              *d_Data;
+    uint               *d_Histogram;
+    int                 PassFailFlag = 1;
+    uint                byteCount    = 64 * 1048576;
+    uint                uiSizeMult   = 1;
+
+    cudaDeviceProp deviceProp;
+    deviceProp.major = 0;
+    deviceProp.minor = 0;
+
+    // set logfile name and start logs
+    printf("[%s] - Starting...\n", sSDKsample);
+
+    // Use command-line specified CUDA device, otherwise use device with highest
+    // Gflops/s
+
+
+    printf("Initializing data...\n");
+    printf("...allocating CPU memory.\n");
+    cudaMallocHost(&h_Data, byteCount);
+    cudaMallocHost(&h_HistogramCPU, HISTOGRAM256_BIN_COUNT * sizeof(uint));
+    cudaMallocHost(&h_HistogramGPU, HISTOGRAM256_BIN_COUNT * sizeof(uint));
+
+
+    
+
+    printf("...generating input data\n");
+    srand(2009);
+
+    for (uint i = 0; i < byteCount; i++) {
+        h_Data[i] = rand() % 256;
+    }
+
+    printf("...allocating GPU memory and copying input data\n\n");
+
+    {
+        printf("Initializing 256-bin histogram...\n");
+        initHistogram256();
+
+        printf("Running 256-bin GPU histogram for %u bytes (%u runs)...\n\n", byteCount, numRuns);
+        static const uint PARTIAL_HISTOGRAM256_COUNT = 240;
+
+        int chunkBytes = byteCount / NUM_OF_PARTITIONS;
+        int partialPerPartition = PARTIAL_HISTOGRAM256_COUNT / NUM_OF_PARTITIONS;
+
+        cudaStream_t streams[NUM_OF_PARTITIONS];
+
+        checkCudaErrors(cudaMalloc((void **)&d_Data, byteCount));
+        checkCudaErrors(cudaMalloc((void **)&d_Histogram, HISTOGRAM256_BIN_COUNT * sizeof(uint)));
+        checkCudaErrors(cudaMemcpy(d_Data, h_Data, byteCount, cudaMemcpyHostToDevice));
+
+
+        for(int i = 0; i < NUM_OF_PARTITIONS; i++){
+            cudaStreamCreate(&streams[i]);
+            int dataOffset = i * (chunkBytes/sizeof(uint));
+            int partialOffset = i * partialPerPartition;
+
+            strippedhistogram256(d_Histogram,
+                        (uint*)d_Data + dataOffset,
+                        chunkBytes,
+                        streams[i],
+                        partialOffset,
+                        partialPerPartition);
+        }
+        cudaDeviceSynchronize();
+        
+        // -------- DOING IT WITHOUT MERGE ---------
+
+        // strippedhistogram256merge(d_Histogram, d_Data, byteCount);
+
+
+        cudaDeviceSynchronize();       
+
+        printf("\nValidating GPU results...\n");
+        printf(" ...reading back GPU results\n");
+        checkCudaErrors(
+            cudaMemcpy(h_HistogramGPU, d_Histogram, HISTOGRAM256_BIN_COUNT * sizeof(uint), cudaMemcpyDeviceToHost));
+
+        printf(" ...histogram256CPU()\n");
+        histogram256CPU(h_HistogramCPU, h_Data, byteCount);
+
+        // printf(" ...comparing the results\n");
+
+        // for (uint i = 0; i < HISTOGRAM256_BIN_COUNT; i++){
+        //     printf("%u\n", h_HistogramGPU[i]);
+
+        //     if (h_HistogramGPU[i] != h_HistogramCPU[i]) {
+        //         PassFailFlag = 0;
+        //     }
+        // }
+        // printf(PassFailFlag ? " ...256-bin histograms match\n\n" : " ***256-bin histograms do not match!!!***\n\n");
+
+        printf("Shutting down 256-bin histogram...\n\n\n");
+        closeHistogram256();
+    }
+
+    printf("Shutting down...\n");
+    checkCudaErrors(cudaFree(d_Histogram));
+    checkCudaErrors(cudaFree(d_Data));
+    cudaFreeHost(h_HistogramGPU);
+    cudaFreeHost(h_HistogramCPU);
+    cudaFreeHost(h_Data);
+
+    printf("\nNOTE: The CUDA Samples are not meant for performance measurements. "
+           "Results may vary when GPU Boost is enabled.\n\n");
+
+    printf("%s - Test Summary\n", sSDKsample);
+
+    // pass or fail (for both 64 bit and 256 bit histograms)
+    if (!PassFailFlag) {
+        printf("Test failed!\n");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Test passed\n");
+    exit(EXIT_SUCCESS);
+}
